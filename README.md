@@ -1,9 +1,10 @@
-# Next.js Authentication Package
+# Next.js Authentication & Project Management Package
 
-A reusable authentication module for Next.js applications with Prisma and NextAuth.js.
+A reusable authentication and project management module for Next.js applications with Prisma and NextAuth.js.
 
 ## Features
 
+### Authentication
 - Complete authentication system with NextAuth.js
 - Email/password authentication
 - OAuth providers (Google, GitHub, LinkedIn)
@@ -11,6 +12,14 @@ A reusable authentication module for Next.js applications with Prisma and NextAu
 - Login/Signup components
 - Authentication middleware
 - TypeScript support
+- Prisma integration
+
+### Project Management
+- Create, read, update, delete (CRUD) projects
+- Project stages management
+- User-specific projects
+- Admin impersonation support
+- TypeScript interfaces
 - Prisma integration
 
 ## Installation
@@ -39,7 +48,7 @@ Initialize Prisma:
 npx prisma init
 ```
 
-Copy the authentication schema to your Prisma schema:
+Copy the authentication and project management schema to your Prisma schema:
 
 ```prisma
 model User {
@@ -52,8 +61,49 @@ model User {
   profile_image     String?
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
+  projects          Project[]
 
   @@map("users")
+}
+
+model Project {
+  id                  String             @id @default(uuid())
+  user_id             String
+  project_title       String
+  project_description String?
+  tags                String[]
+  created_at          DateTime           @default(now())
+  updated_at          DateTime           @updatedAt
+  stages              ProjectStage[]
+  user                User               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("projects")
+}
+
+model ProjectStage {
+  id          String    @id @default(uuid())
+  project_id  String
+  stage_name  StageName
+  user_inputs Json
+  ai_outputs  Json
+  finalized   Boolean   @default(false)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+  project     Project   @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_id, stage_name])
+  @@map("project_stages")
+}
+
+enum StageName {
+  Ideation
+  Planning
+  Research
+  Development
+  Testing
+  Deployment
+  Maintenance
+  Review
 }
 
 model Account {
@@ -180,6 +230,7 @@ const authOptions = createAuthOptions(
 );
 
 export default NextAuth(authOptions);
+export { authOptions };
 ```
 
 ### 2. Create registration API route
@@ -226,7 +277,68 @@ export default async function handler(
 }
 ```
 
-### 3. Set up middleware (optional)
+### 3. Set up Project API routes
+
+Create the file `pages/api/projects/index.ts`:
+
+```typescript
+import { projectHandler } from 'nextjs-auth-package';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { authOptions } from '../auth/[...nextauth]';
+import { StageName } from '@prisma/client';
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  // Define admin emails that can impersonate users
+  const adminEmails = ['admin@example.com'];
+  
+  // Define custom stages if needed
+  const customStages: StageName[] = [
+    StageName.Ideation,
+    StageName.Planning,
+    StageName.Research,
+    StageName.Development,
+    // Add or remove stages as needed
+  ];
+  
+  // Use the project handler with custom settings
+  return projectHandler(
+    req, 
+    res, 
+    authOptions, 
+    adminEmails, 
+    customStages,
+    true, // Enable CORS
+    'http://localhost:3000' // CORS origin
+  );
+}
+```
+
+Create the file `pages/api/projects/[id].ts`:
+
+```typescript
+import { projectDetailHandler } from 'nextjs-auth-package';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { authOptions } from '../auth/[...nextauth]';
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  // Use the project detail handler with custom settings
+  return projectDetailHandler(
+    req, 
+    res, 
+    authOptions,
+    true, // Enable CORS
+    'http://localhost:3000' // CORS origin
+  );
+}
+```
+
+### 4. Set up middleware (optional)
 
 Create the file `middleware.ts` in your project root:
 
@@ -234,7 +346,7 @@ Create the file `middleware.ts` in your project root:
 import { createAuthMiddleware } from 'nextjs-auth-package';
 
 export const middleware = createAuthMiddleware({
-  protectedPaths: ['/dashboard', '/profile', '/api/protected'],
+  protectedPaths: ['/dashboard', '/profile', '/api/protected', '/api/projects'],
   publicPaths: ['/api/public', '/auth', '/'],
   loginPath: '/auth/login',
   corsEnabled: true,
@@ -245,12 +357,13 @@ export const config = {
     '/dashboard/:path*',
     '/profile/:path*',
     '/api/protected/:path*',
+    '/api/projects/:path*',
     '/api/public/:path*',
   ],
 };
 ```
 
-### 4. Create login page
+### 5. Create login page
 
 Create the file `pages/auth/login.tsx`:
 
@@ -271,7 +384,7 @@ export default function LoginPage() {
 }
 ```
 
-### 5. Create signup page
+### 6. Create signup page
 
 Create the file `pages/auth/signup.tsx`:
 
@@ -288,6 +401,178 @@ export default function SignupPage() {
       loginLink="/auth/login"
       termsAndConditions={true}
     />
+  );
+}
+```
+
+### 7. Use project management in your frontend
+
+Example of fetching projects in a React component:
+
+```typescript
+import { useState, useEffect } from 'react';
+import { Project } from 'nextjs-auth-package';
+import { useSession } from 'next-auth/react';
+
+export default function ProjectList() {
+  const { data: session } = useSession();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const fetchProjects = async () => {
+      if (!session) return;
+      
+      try {
+        const response = await fetch('/api/projects');
+        const data = await response.json();
+        
+        if (response.ok) {
+          setProjects(data.projects);
+        } else {
+          setError(data.message || 'Failed to fetch projects');
+        }
+      } catch (err) {
+        setError('An error occurred while fetching projects');
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchProjects();
+  }, [session]);
+
+  return (
+    <div>
+      <h1>My Projects</h1>
+      
+      {loading && <p>Loading projects...</p>}
+      {error && <p className="text-red-500">{error}</p>}
+      
+      <ul>
+        {projects.map(project => (
+          <li key={project.id}>
+            <h2>{project.project_title}</h2>
+            <p>{project.project_description}</p>
+            <div>
+              {project.tags.map(tag => (
+                <span key={tag} className="tag">{tag}</span>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+Example of creating a new project:
+
+```typescript
+import { useState } from 'react';
+import { useRouter } from 'next/router';
+import { CreateProjectInput } from 'nextjs-auth-package';
+
+export default function CreateProject() {
+  const router = useRouter();
+  const [formData, setFormData] = useState<CreateProjectInput>({
+    project_title: '',
+    project_description: '',
+    tags: []
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleTagsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const tags = e.target.value.split(',').map(tag => tag.trim());
+    setFormData(prev => ({ ...prev, tags }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch('/api/projects', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        router.push('/projects');
+      } else {
+        setError(data.message || 'Failed to create project');
+      }
+    } catch (err) {
+      setError('An error occurred while creating the project');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <h1>Create New Project</h1>
+      
+      {error && <p className="text-red-500">{error}</p>}
+      
+      <form onSubmit={handleSubmit}>
+        <div>
+          <label htmlFor="project_title">Project Title</label>
+          <input
+            id="project_title"
+            name="project_title"
+            type="text"
+            value={formData.project_title}
+            onChange={handleChange}
+            required
+          />
+        </div>
+        
+        <div>
+          <label htmlFor="project_description">Description</label>
+          <textarea
+            id="project_description"
+            name="project_description"
+            value={formData.project_description || ''}
+            onChange={handleChange}
+          />
+        </div>
+        
+        <div>
+          <label htmlFor="tags">Tags (comma separated)</label>
+          <input
+            id="tags"
+            name="tags"
+            type="text"
+            value={formData.tags?.join(', ')}
+            onChange={handleTagsChange}
+          />
+        </div>
+        
+        <button
+          type="submit"
+          disabled={loading}
+        >
+          {loading ? 'Creating...' : 'Create Project'}
+        </button>
+      </form>
+    </div>
   );
 }
 ```
@@ -334,6 +619,40 @@ You can customize the Signup component by passing props:
     </div>
   }
 />
+```
+
+### Custom Project Stages
+
+You can define custom project stages in your Prisma schema:
+
+```prisma
+enum StageName {
+  Requirements
+  Design
+  Implementation
+  Testing
+  Deployment
+  Maintenance
+}
+```
+
+Then use these custom stages when creating projects:
+
+```typescript
+import { projectHandler } from 'nextjs-auth-package';
+import { StageName } from '@prisma/client';
+
+// Define custom stages
+const customStages: StageName[] = [
+  StageName.Requirements,
+  StageName.Design,
+  StageName.Implementation,
+  StageName.Testing,
+  StageName.Deployment,
+];
+
+// Use in project handler
+return projectHandler(req, res, authOptions, [], customStages);
 ```
 
 ## License

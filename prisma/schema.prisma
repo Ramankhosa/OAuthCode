@@ -17,8 +17,49 @@ model User {
   profile_image     String?
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
+  projects          Project[]
 
   @@map("users")
+}
+
+model Project {
+  id                  String             @id @default(uuid())
+  user_id             String
+  project_title       String
+  project_description String?
+  tags                String[]
+  created_at          DateTime           @default(now())
+  updated_at          DateTime           @updatedAt
+  stages              ProjectStage[]
+  user                User               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("projects")
+}
+
+model ProjectStage {
+  id          String    @id @default(uuid())
+  project_id  String
+  stage_name  StageName
+  user_inputs Json
+  ai_outputs  Json
+  finalized   Boolean   @default(false)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+  project     Project   @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_id, stage_name])
+  @@map("project_stages")
+}
+
+enum StageName {
+  Ideation
+  Planning
+  Research
+  Development
+  Testing
+  Deployment
+  Maintenance
+  Review
 }
 
 model Account {
